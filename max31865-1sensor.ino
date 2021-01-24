@@ -25,12 +25,12 @@ const boolean debug = true;
 // Resister in series to move the range up
 // with 890Ohm we can get from ~ -15°C (941Ohm) to 275°C (1890Ohm)
 // Adjust the offset if the results on the heating system are of
-const int rOffset = 880;
+const int rOffset = 895;
 
 // AD8400 1k DigiPot has a non linear output ?!!?
 // 5 Samples @64 steps are used to reduce error
 const int rStep0 (51 + rOffset);
-const int rStep64 (381 + rOffset); // 331 + rOffset... highered because values  °c was too high
+const int rStep64 (331 + rOffset); // 14.01.21 381 mess up values for next step!, 331 + rOffset... highered because values °c on the heating system was too high
 const int rStep128 (607 + rOffset);
 const int rStep192 (878 + rOffset);
 const int rStep255 (1143 + rOffset);
@@ -100,11 +100,11 @@ float mergeTempretures(Adafruit_MAX31865 thermo1, Adafruit_MAX31865 thermo2)
   float t2 = thermo2.temperature(RNOMINAL, RREF);
 
   // T1 having problems use T2
-  if ( checkThermostatError( thermo1, "th 1") )
+  if ( checkThermostatError( thermo1, "th 1", true ) )
   {
       // T2 is also having problems return 0°c
       // Yes this can happen when a rodent eats through the wiring >:|
-      if ( checkThermostatError( thermo2, "th 2" ) )
+      if ( checkThermostatError( thermo2, "th 2", false ) )
       {
         setPotValue( 1000 );
         return 0.0;
@@ -115,9 +115,9 @@ float mergeTempretures(Adafruit_MAX31865 thermo1, Adafruit_MAX31865 thermo2)
   }
 
   // T2 having problems use T1, inverse of above
-  if ( checkThermostatError( thermo2, "th 2" ) )
+  if ( checkThermostatError( thermo2, "th 2", true ) )
   {
-    if ( checkThermostatError( thermo1, "th 1") )
+    if ( checkThermostatError( thermo1, "th 1", false ) )
     { 
       setPotValue( 1000 );
       return 0.0;
@@ -198,13 +198,13 @@ float mergeTempretures(Adafruit_MAX31865 thermo1, Adafruit_MAX31865 thermo2)
   return ( (t1 + t2) / 2);
 }
 
-boolean checkThermostatError( Adafruit_MAX31865 thermo, String termostatName )
+boolean checkThermostatError( Adafruit_MAX31865 thermo, String termostatName, boolean resetErrorLed )
 {
   // Check and print any faults
   uint8_t fault = thermo.readFault();
   if ( fault == 0 )
   {
-    if ( isError )
+    if ( isError && resetErrorLed )
     {
       isError = false;
       digitalWrite(LED_ERROR_PIN, LOW);
@@ -302,6 +302,6 @@ void setPotValue( float resistance )
 
 int resistanceToSteps( int resistance, int _rStep0, int _rStep1 )
 {
-  float ohmsPerStep = (_rStep1 - _rStep0) / 64.0;
+  float ohmsPerStep = ( _rStep1 - _rStep0 ) / 64.0;
   return floor( ( resistance - _rStep0 ) / ohmsPerStep );
 }
