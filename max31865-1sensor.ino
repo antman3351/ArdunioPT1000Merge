@@ -12,18 +12,25 @@ Adafruit_MAX31865 thermo2 = Adafruit_MAX31865(9, 5, 6, 7); // Adafruit_MAX31865(
 // 100.0 for PT100, 1000.0 for PT1000
 #define RNOMINAL  1000.0
 
+// Pin used for ERROR LED
+#define LED_ERROR_PIN 2
+
+#define DELAY_NORMAL 3000 // 3s, Normal delay when temp is above 30°c
+#define DELAY_WARUP 10000 // 10s, Delay when them is > 20 and < 30°
+#define DAYLAY_COLD 60000 // 60s, Delay when the pannels are cold, no point constantly updating
+
 // Write info to the console
-const boolean debug = false;
+const boolean debug = true;
 
 // Resister in series to move the range up
 // with 890Ohm we can get from ~ -15°C (941Ohm) to 275°C (1890Ohm)
 // Adjust the offset if the results on the heating system are of
-const int rOffset = 905;
+const int rOffset = 880;
 
 // AD8400 1k DigiPot has a non linear output ?!!?
 // 5 Samples @64 steps are used to reduce error
 const int rStep0 (51 + rOffset);
-const int rStep64 (331 + rOffset);
+const int rStep64 (381 + rOffset); // 331 + rOffset... highered because values  °c was too high
 const int rStep128 (607 + rOffset);
 const int rStep192 (878 + rOffset);
 const int rStep255 (1143 + rOffset);
@@ -31,6 +38,7 @@ const int rStep255 (1143 + rOffset);
 byte address = 0x00;
 int outputCs = 8;
 int lastRValue = -1;
+boolean isError = false; // Flag to see if we are allready in "error mode" (led is on)
 
 void setup()
 {
@@ -45,7 +53,7 @@ void setup()
   thermo2.begin(MAX31865_2WIRE);  // set to 2WIRE or 4WIRE as necessary
 
   // Onboard LED is same pin as SPI, and I don't have an LED about...
-  // pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(LED_ERROR_PIN, OUTPUT);
 
   SPI.begin();
 }
@@ -60,7 +68,19 @@ void loop()
     Serial.println("°C");
   }
 
-  delay(2000); // 2s
+  // Variable sleep times depending on the temp.
+   if ( tOut < 21 )
+   {
+      delay( DAYLAY_COLD );
+   }
+   else if( tOut < 31 )
+   {
+      delay( DELAY_WARUP );
+   }
+   else
+   {
+      delay( DELAY_NORMAL );
+   }
 }
 
 float getReistance(Adafruit_MAX31865 thermo)
@@ -76,23 +96,37 @@ float getReistance(Adafruit_MAX31865 thermo)
 */
 float mergeTempretures(Adafruit_MAX31865 thermo1, Adafruit_MAX31865 thermo2)
 {
-  // T1 having problems use T2
-  if ( checkThermostatError( thermo1 ) )
-  {
-    setPotValue( getReistance(thermo1) );
-    return thermo2.temperature(RNOMINAL, RREF);
-  }
-
-  // T2 having problems use T1
-  if ( checkThermostatError( thermo2 ) )
-  {
-    setPotValue( getReistance(thermo2) );
-    return thermo1.temperature(RNOMINAL, RREF);
-  }
-
   float t1 = thermo1.temperature(RNOMINAL, RREF);
   float t2 = thermo2.temperature(RNOMINAL, RREF);
 
+  // T1 having problems use T2
+  if ( checkThermostatError( thermo1, "th 1") )
+  {
+      // T2 is also having problems return 0°c
+      // Yes this can happen when a rodent eats through the wiring >:|
+      if ( checkThermostatError( thermo2, "th 2" ) )
+      {
+        setPotValue( 1000 );
+        return 0.0;
+      }
+      
+      setPotValue( getReistance(thermo2) );
+      return thermo2.temperature(RNOMINAL, RREF);
+  }
+
+  // T2 having problems use T1, inverse of above
+  if ( checkThermostatError( thermo2, "th 2" ) )
+  {
+    if ( checkThermostatError( thermo1, "th 1") )
+    { 
+      setPotValue( 1000 );
+      return 0.0;
+    }
+    
+    setPotValue( getReistance(thermo1) );
+    return thermo1.temperature(RNOMINAL, RREF);
+  }
+ 
   if ( debug )
   {
       Serial.print("");
@@ -164,18 +198,24 @@ float mergeTempretures(Adafruit_MAX31865 thermo1, Adafruit_MAX31865 thermo2)
   return ( (t1 + t2) / 2);
 }
 
-boolean checkThermostatError( Adafruit_MAX31865 thermo )
+boolean checkThermostatError( Adafruit_MAX31865 thermo, String termostatName )
 {
   // Check and print any faults
   uint8_t fault = thermo.readFault();
   if ( fault == 0 )
   {
+    if ( isError )
+    {
+      isError = false;
+      digitalWrite(LED_ERROR_PIN, LOW);
+    }
+    
     return false;
   }
 
   if ( debug )
   {
-    Serial.print("Fault 0x"); Serial.println(fault, HEX);
+    Serial.print(termostatName + " - Fault 0x on " ); Serial.println(fault, HEX);
     if (fault & MAX31865_FAULT_HIGHTHRESH) {
       Serial.println("RTD High Threshold");
     }
@@ -197,17 +237,13 @@ boolean checkThermostatError( Adafruit_MAX31865 thermo )
   }
 
   thermo.clearFault();
-  /*
-    // Error Blink the LED
-    for ( int i = 0; i < 5; i++ )
-    {
-      Serial.println("Blink");
-      digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
-      delay(500);
-      digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
-      delay(500);
-    }
-  */
+
+  if ( ! isError )
+  {
+    isError = true;
+    digitalWrite(LED_ERROR_PIN, HIGH);
+  }
+  
   return true;
 }
 
